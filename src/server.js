@@ -3,16 +3,24 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { exec } from 'child_process';
+import rateLimit from 'express-rate-limit';
 
 dotenv.config();
 
 const app = express();
 const port = 3000;
 
+const limiter = rateLimit({
+  windowMs: 1000, // 1 second
+  max: 1, // Allow only 1 request per second
+});
+
 app.use(cors());
 app.use(express.json());
+//app.use('/process-text', limiter);
 
-// Helper Functions
+
+
 
 // Preprocess text: Clean and normalize
 const preprocessText = (text) => {
@@ -20,35 +28,16 @@ const preprocessText = (text) => {
   return text.replace(/\s+/g, ' ').trim();
 };
 
-// Extract entities and split into chunks using spaCy
-// async function extractEntitiesWithSpacy(text) {
-//   return new Promise((resolve, reject) => {
-//     console.log("Step 2: Extracting entities and chunking with spaCy...");
-//     exec(`python3 src/spacy2_script.py "${text}"`, (error, stdout, stderr) => {
-//       if (error) {
-//         console.error("Error in spaCy script:", error.message);
-//         reject(error.message);
-//       } else if (stderr) {
-//         console.error("spaCy stderr:", stderr);
-//         reject(stderr);
-//       } else {
-//         try {
-//           console.log("Extracted Entities:", stdout);
-//           resolve(JSON.parse(stdout));
-//         } catch (err) {
-//           console.error("Error parsing spaCy output:", err);
-//           reject("Parsing error in spaCy output");
-//         }
-//       }
-//     });
-//   });
-// }
 
-
+//elements
 const prompt = (text) => {
-  return `This is the text: ${text}. I want a summary of the text as an arraylist back in the following form. Do not write any additional text, just give me the arraylist: I want you to extend and enhance this list with contents from the article. Here are the descriptions of the attributes: [entity name; entity description; status or group of the entity; references to one or more other entities created that resemble superordinate concepts or entities like a parent-child relationship or a whole-part relationship,where always the bigger or superordinate is represented; a list of tuples that consist of one reference to another created entity and a matching description where dynamics and relationships that are not hierarchical should be described for example the way one entity changes another one; references to entities that result out of the current entity so that a sequence of events is described].
+  return `This is the text: ${text}. I want a summary of the text as an arraylist back in the following form. Do not write any additional text, just give me the arraylist: I want you to extend and enhance this list with contents from the article. Here are the descriptions of the attributes: [entity name; entity description; status or group of the entity; references to one or more other entities created that resemble superordinate concepts or entities like a parent-child relationship or a whole-part relationship,where always the bigger or superordinate is represented; a list of tuples that consist of one reference to another created entity and a matching description where dynamics and relationships that are not hierarchical should be described for example the way one entity changes another one].
   
-  Try to not assign many statuses, but rateher give the same status to several entities. An object can have several parents. An object can reference several sequence objects. Make sure to work out sequences that are not back-referencing but have a clear direction over several entities. Here is an example so you have an idea, how the form could look like:
+  Try to not assign many statuses, but rateher give the same status to several entities.
+
+  An object can have several parents. Try to use the given entities as parents. A tree-like structure over several levels should emerge.
+  
+  Here is an example so you have an idea, how the form could look like:
   "[
       {
           "name": "car",
@@ -58,97 +47,35 @@ const prompt = (text) => {
           "relations": [
               ["engine", "Powered by either internal combustion engines or electric motors"],
               ["hybrid_car", "Uses both traditional and electric propulsion systems"],
-              ["autonomous_vehicle", "Can function independently without a human driver"],
-              ["electric_vehicle", "Powered exclusively by electricity"],
-              ["chassis", "Supports the structure and components of the car"]
-          ],
-          "sequence": ["fast transportation", "long distance connectivity"]
+              ["autonomous_vehicle", "Can function independently without a human driver"]
+          ]
+  }
+]"
+
+Give at least 15 different entities.
+
+Ensure output is a valid JSON. Do not include extra text.
 
 `}
 
-const extractEntitiesPrompt = (text) => {
-  return `Extract exactly 15 key entities from the text below.
-Return your answer as a valid JSON array with exactly 15 objects.
-Each object must have the keys "name", "description", "tag" (all string values).
-Do not include any extra text, comments, or markdown formatting.
+//,"sequence": ["fast transportation", "long distance connectivity"]
+  
+// Also create sequences of several of the created entities that emerge from each other or can be described to follow aech oher in a sequence. Try to include more than 2 elements for each sequence. An element references the sequence element or several elements that follow it.
+  
+//reference to elements that follows sequenmtially
 
-Text: "${text}"
-
-Example output:
-[
-  {"name": "Entity 1", "description": "Description of entity 1", "tag": "tag1"},
-  {"name": "Entity 2", "description": "Description of entity 2", "tag": "tag2"},
-  ...
-]
-`;
-};
-
-
-
-
-const relationsPrompt = (entities, text) => {
-  return ` For each entity in ${entities.map(e => e.name).join(', ')} give at least 5 relationships to other entities that are important based on the ${text}. Tag each relationship with one of the following tags:
-
-- hierarchical: for references to other entities that resemble superordinate concepts or entities like a parent-child       relationship or a whole-part relationship where always the bigger or superordinate is represented
-
-
-- dynamic: for references to other entities that resemble dynamics and relationships that are not hierarchical like for example the way one entity changes another one
-
-- sequence: references to other entities that emerge out of the current entity so that a sequence of events is described.
-
-
-
-give the answer in the following form:
-
-[entity name:
-  [relation entity 1; description, tag],
-  [relation entity 2; description, tag], ...
-
-]
-
-
-Give at least 5 relationships for each entity in the list!
-
-`;
-};
-
-
-
-
-
-
-
-
-
-
-// const relationsPrompt = (entity, entities, text) => {
-//   return `Analyze the relationships between ${entity} and each entity in the following list:
-// ${entities.map(e => e.name).join(', ')}
-// Based on the context: "${text}"
-// For each relationship return:
-// - entity name,
-// - A description of the relationship,
-// - The type of relationship (choose one of: hierarchical, dynamic, sequential).
-
-// `;
-// };
-
-
-
-
-// 4a. Function to call LLM for entity extraction
-async function extractEntitiesLLM(text) {
+async function extractDeep(text) {
   try {
     console.log("Step 3a: Fetching entity extraction from LLM");
     const response = await axios.post('http://localhost:11434/api/generate', {
-      model: 'llama3',
-      prompt: extractEntitiesPrompt(text),
+      model: 'deepseek-r1:7b',
+      prompt: prompt(text),
       stream: false,
       temperature: 0.1
     });
-    console.log("LLM entity response:", response.data);
-    // Parse the LLM response into a JSON array of entity objects.
-    // (Implement your parsing logic here based on the LLM output.)
+   
+    console.log("extracted entities", response.data.response)
+
     const entities = parseEntities(response.data.response);
     return entities;
   } catch (error) {
@@ -157,137 +84,168 @@ async function extractEntitiesLLM(text) {
   }
 }
 
-// 4b. Function to call LLM for relationship extraction
-async function extractRelationships(entities, text) {
+
+//sequence
+const seqPrompt = (text, ent) => {
+  return ` 
+Based on the following text: "${text}", create sequences of entities from the list: ${JSON.stringify(ent.map(e => e.name))}. 
+
+Each sequence should be a logical progression of related entities, where one follows naturally from the other. Try to include at least 3 entities per sequence.
+
+Return only a valid JSON array of arrays, without any extra text:  
+[
+  ["entity1", "entity2", "entity3"],
+  ["entity4", "entity5", "entity6"]
+]
+
+Ensure the output is valid JSON.`;
+}
+
+
+async function extractSequence(text, ent) {
   try {
-    console.log("Step 3b: Fetching relationship extraction from LLM");
+    console.log("Step 3b: Fetching sequences");
     const response = await axios.post('http://localhost:11434/api/generate', {
-      model: 'llama3',
-      prompt: relationsPrompt(entities, text),
+      model: 'deepseek-r1:7b',
+      prompt: seqPrompt(text, ent),
       stream: false,
-      temperature: 0.1  
+      temperature: 0.1
     });
-    // console.log("LLM relationships response:", response.data);
-    // Parse the relationship output into a structured array of objects.
-    // (Implement your parsing logic here based on the LLM output.)
-    // const relationships = parseRelationships(response.data.response);
-    const relationships = response.data.response;
-    return relationships;
+
+    console.log("Extracted sequences:", response.data.response);
+
+    const sequences = parseEntities(response.data.response);
+
+    //ensure JSON
+    // const jsonText = response.data.response.trim();
+    // // const sequ = sanitizeJSON(jsonText);
+    // const sequences = JSON.parse(jsonText);
+    
+    console.log("Extracted sequences:", sequences);
+    return sequences;
   } catch (error) {
-    console.error('Error during relationship extraction:', error);
-    throw new Error('Relationship extraction failed');
+    console.error('Error during entity extraction:', error);
+    throw new Error('Entity extraction failed');
   }
 }
 
-// 5. Build the final JSON structure from entities and relationships
-function buildFinalJson(entities, relationships) {
-  // Initialize each entity’s final object with empty arrays.
-  const finalEntities = {};
-  entities.forEach(e => {
-    finalEntities[e.name] = {
-      name: e.name,
-      description: e.description,
-      status: e.tag,   // using the extracted tag as status
-      parents: [],
-      relations: [],
-      sequence: []
-    };
-  });
 
-  // Process each relationship object
-  relationships.forEach(rel => {
-    // Normalize the relationship object to our expected keys:
-    const entityA = rel.entityA || rel["Entity1"];
-    const entityB = rel.entityB || rel["Entity2"];
-    // Normalize the relationship type, ensuring we can safely call toLowerCase()
-    const rawType = rel.type || rel["Type"] || "";
-    const type = rawType.toLowerCase();
-    const description = rel.description || rel["Relationship"] || "";
 
-    // Skip this relationship if any required field is missing
-    if (!entityA || !entityB || !type) {
-      return;
-    }
 
-    if (type === 'hierarchical') {
-      // For a hierarchical relationship, assume entityA is the parent and entityB is the child.
-      if (finalEntities[entityB]) {
-        finalEntities[entityB].parents.push(entityA);
-      }
-    } else if (type === 'dynamic') {
-      // For dynamic, add reciprocal relations.
-      if (finalEntities[entityA]) {
-        finalEntities[entityA].relations.push([entityB, description]);
-      }
-      if (finalEntities[entityB]) {
-        finalEntities[entityB].relations.push([entityA, description]);
-      }
-    } else if (type === 'sequential') {
-      // For sequential, assume entityA comes before entityB.
-      if (finalEntities[entityA]) {
-        finalEntities[entityA].sequence.push([entityB, description]);
+
+function parseEntities(responseText) {
+  // Find the first '[' character
+  const startIndex = responseText.indexOf('[');
+  if (startIndex === -1) {
+    console.error("No JSON array found in response.");
+    return [];
+  }
+
+  // Use a counter to find the matching closing ']'
+  let bracketCount = 0;
+  let endIndex = -1;
+  for (let i = startIndex; i < responseText.length; i++) {
+    const char = responseText[i];
+    if (char === '[') {
+      bracketCount++;
+    } else if (char === ']') {
+      bracketCount--;
+      if (bracketCount === 0) {
+        endIndex = i;
+        break;
       }
     }
-  });
+  }
 
-  return Object.values(finalEntities);
-}
+  if (endIndex === -1) {
+    console.error("Could not find a matching closing bracket.");
+    return [];
+  }
+
+  // Extract the JSON substring
+  const jsonString = responseText.substring(startIndex, endIndex + 1).trim();
+
+  // Optionally, remove unwanted escapes or whitespace issues
+  const sanitizedString = jsonString
+    .replace(/\s+/g, ' ')
+    .replace(/\\'/g, "'")
+    .replace(/\\"/g, '"')
+    .replace(/<\/?think>/gi, '')
+    .replace(/\n/g, ''); // Remove newlines
 
 
 
+    console.log("san: ", sanitizedString)
 
-
-
-function parseEntities(llmResponse) {
   try {
-      // Attempt to directly parse the response
-      try {
-          return JSON.parse(llmResponse);
-      } catch (e) {
-          // If direct parsing fails, attempt to extract the JSON array
-          const jsonString = llmResponse.substring(
-              llmResponse.indexOf('['),
-              llmResponse.lastIndexOf(']') + 1
-          );
-          return JSON.parse(jsonString);
-      }
+    const parsed = JSON.parse(sanitizedString);
+    return Array.isArray(parsed) ? parsed : [parsed];
   } catch (error) {
-      console.error("Error parsing entities:", error);
-      throw error;
+    console.error("Error parsing JSON:", error);
+    console.log("Sanitized response that failed to parse:", sanitizedString);
+    return [];
   }
 }
 
 
 
 
-// function parseRelationships(rawText) {
-//   // Find the first '[' and the last ']' in the response.
-//   const firstIndex = rawText.indexOf('[');
-//   const lastIndex = rawText.lastIndexOf(']');
-  
-//   if (firstIndex === -1 || lastIndex === -1) {
-//     throw new Error("JSON array not found in the relationships response.");
-//   }
-  
-//   // Extract the JSON string portion.
-//   const jsonString = rawText.substring(firstIndex, lastIndex + 1);
-  
-//   try {
-//     // Parse the extracted JSON string.
-//     return JSON.parse(jsonString);
-//   } catch (err) {
-//     throw new Error("Error parsing relationships JSON: " + err.message);
-//   }
-// }
+
+// function parseEntities(responseText){
+//     try {
+//         // Remove any text before the first '[' and after the last ']'
+//         const jsonString = responseText.replace(/^[^[]*/, '').replace(/][^]*$/, ']');
+        
+//         // Remove newlines and extra spaces, and escape special characters
+//         const sanitizedString = jsonString
+//             .replace(/\s+/g, ' ') // Replace multiple whitespace with a single space
+//             .replace(/\\'/g, "'") // Replace escaped single quotes
+//             .replace(/\\"/g, '"') // Replace escaped double quotes
+//             .replace(/\n/g, '') // Remove newlines
+//             .replace(/\r/g, '') // Remove carriage returns
+//             .replace(/\t/g, ''); // Remove tabs
+        
+// console.log("san: ", sanitizeJSON)
+
+//         // Parse the sanitized JSON string
+//         const parsed = JSON.parse(sanitizedString);
+        
+//         // Ensure the result is an array
+//         return Array.isArray(parsed) ? parsed : [parsed];
+//     } catch (error) {
+//         console.error("Error parsing entities:", error);
+//         console.log("Problematic response:", responseText);
+//         return []; // Return empty array to prevent crashes
+//     }
+
+// };
+
+
+
+function sanitizeJSON(responseText) {
+  try {
+      // Remove anything before the first '[' to get a valid JSON structure
+      const jsonStartIndex = responseText.indexOf("[");
+      if (jsonStartIndex === -1) throw new Error("No JSON found in response");
+
+      const jsonText = responseText.slice(jsonStartIndex).trim();
+      
+      return JSON.parse(jsonText);
+  } catch (error) {
+      console.error("Error parsing JSON:", error);
+      throw new Error("Failed to parse JSON");
+  }
+}
 
 
 
 
 
+
+
+//main
 app.post('/process-text', async (req, res) => {
- 
- 
- 
+  console.log(`New request received at ${new Date().toISOString()}`);
   try {
     console.log("===== New Request Received =====");
     const { text } = req.body;
@@ -295,57 +253,44 @@ app.post('/process-text', async (req, res) => {
       return res.status(400).json({ error: 'Text input is required' });
     }
 
-    // Preprocess the text.
+    //preprocess
     const cleanedText = preprocessText(text);
 
 
+    //console.log("Calling extractDeep with text:", cleanedText);
+    //fetch entities
+    const entities = await extractDeep(cleanedText);
 
-    // const entities = extractEntitiesWithSpacy(cleanedText);
 
-    // console.log(entities);
+    console.log("Calling extractSequence with entities:", entities);
+    //fetch sequences
+    const sequence = await extractSequence(cleanedText, entities)
 
-    // Extract entities using the LLM.
-    const entities = await extractEntitiesLLM(cleanedText);
-    if (!entities || !Array.isArray(entities) || entities.length === 0) {
-      return res.status(500).json({ error: 'No entities extracted.' });
-    }
 
     console.log(entities)
+    console.log(sequence)
 
 
-
-
-
-
-
-    // Fetch additional details for each entity in parallel
-    // const enrichedEntities = await Promise.all(
-    //   entities.map(async (entity) => {
-
-    //   console.log(entity.name)
-
-        try {
-
-          // Fetch relationships
-          const relationships = await extractRelationships(entities, cleanedText);
-
-          console.log("relations: ", relationships)
-
-          // return {
-          //   name: entity.name,
-          //   description: entity.description || entity.description,
-          //   status: entity.tag || entity.tag,
-          //   relationships: relationships || []
-          // };
-        } catch (err) {
-          console.error(`Error processing entity ${entity.name}:`, err);
-          return { ...entity, relationships: [], error: "Failed to fetch details" };
+    //merge
+    const entityMap = Object.fromEntries(entities.map(e => [e.name, { ...e, sequence: null }]));
+    sequence.forEach(seq => {
+      for (let i = 0; i < seq.length - 1; i++) {
+        if (entityMap[seq[i]]) {
+          entityMap[seq[i]].sequence = entityMap[seq[i]].sequence || [];
+          entityMap[seq[i]].sequence.push(seq[i + 1]);
         }
-      // })
-    // );
+      }
+    });
 
-    console.log("Final response prepared.");
-    res.json(relationships);
+
+
+
+    //finale
+    const updatedEntities = Object.values(entityMap);
+    console.log("Final response prepared:", updatedEntities);
+
+    res.json(updatedEntities);
+
   } catch (error) {
     console.error('Error during text processing:', error);
     res.status(500).json({ error: 'Processing failed' });

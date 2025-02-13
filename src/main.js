@@ -196,6 +196,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 
 let stringifiedData = null;
 
+
+
+
+
+
+
+
 async function fetchSummary() {
   const fileInput = document.getElementById('pdfFile');
   const file = fileInput.files[0];
@@ -212,15 +219,22 @@ async function fetchSummary() {
       const arrayBuffer = event.target.result;
 
       try {
+        console.log("PDF file loaded. Processing...");
+        
         const pdfDocument = await pdfjsLib.getDocument(arrayBuffer).promise;
         const numPages = pdfDocument.numPages;
-        let text = '';
+        console.log(`PDF contains ${numPages} pages.`);
 
+        let text = '';
         for (let pageNum = 1; pageNum <= numPages; pageNum++) {
           const page = await pdfDocument.getPage(pageNum);
           const content = await page.getTextContent();
-          text += content.items.map(item => item.str).join(' ') + '\n';
+          const pageText = content.items.map(item => item.str).join(' ');
+          console.log(`Extracted text from page ${pageNum}:`, pageText);
+          text += pageText + '\n';
         }
+
+        console.log("Full extracted text:", text);
 
         const response = await fetch('http://localhost:3000/process-text', {
           method: 'POST',
@@ -228,14 +242,29 @@ async function fetchSummary() {
           body: JSON.stringify({ text }),
         });
 
-        const data = await response.json();
+        console.log("API request sent. Awaiting response...");
 
+        const responseText = await response.text();
+        console.log("Raw API response:", responseText);
 
-        resolve(data.entities);
+        try {
+          const data = JSON.parse(responseText);
+          console.log("Parsed API response:", JSON.stringify(data, null, 2));
 
+          if (!Array.isArray(data)) {
+            console.error("Unexpected response format:", data);
+            reject("Invalid response format");
+            return;
+          }
+
+          resolve(data);
+        } catch (parseError) {
+          console.error("Error parsing JSON response:", parseError);
+          reject("Invalid JSON response");
+        }
 
       } catch (error) {
-        console.error("Error extracting text from PDF:", error);
+        console.error("Error extracting text from PDF or fetching summary:", error);
         reject(error);
       }
     };
@@ -243,6 +272,7 @@ async function fetchSummary() {
     reader.readAsArrayBuffer(file);
   });
 }
+
 
 window.fetchSummary = fetchSummary;
 
@@ -426,7 +456,7 @@ function enhanceBox(name, parentes = [], relations = [[]], sequence = []) {
     // Create text geometry
     const textGeometry = new TextGeometry(cube.userData.name, {
       font: font,
-      size: boxSize,
+      size: boxSize * 1.5,
       height: 0.2,
       curveSegments: 12,
     });
@@ -2099,7 +2129,7 @@ function sequencePos() {
     let xStart = -bigCubeSize / 2;  // Start X position
     let yFixed = bigCubeSize / 2;   // Base Y position
     let zStart = -bigCubeSize / 2;  // Start Z position
-    let xSpacing = 150;  // Horizontal distance
+    let xSpacing = 250;  // Horizontal distance
     let ySpacing = 25;   // Vertical distance for branches
     let rowSpacing = 50; // Space between independent sequences
 
